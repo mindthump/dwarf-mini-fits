@@ -46,7 +46,11 @@ def reorganize_fits(root_path: Path, lights_src_name: str, use_move: bool):
     lights_src_path = root_path / lights_src_name
     if lights_src_path.is_dir():
         for fits_file in lights_src_path.rglob("*.fits"):
-            if fits_file.name.startswith("failed"):
+            # Exclude dwarf-processed or failed files
+            filename_lower = fits_file.name.lower()
+            if filename_lower.startswith("failed") or filename_lower.startswith(
+                "stacked"
+            ):
                 continue
 
             dest = get_unique_path(root_path / "lights" / fits_file.name)
