@@ -8,7 +8,6 @@ def setup_directories(base_path, dir_names):
     for name in dir_names:
         target_dir = base_path / name
         if target_dir.exists():
-            # Delete contents but keep the directory
             for item in target_dir.iterdir():
                 if item.is_dir():
                     shutil.rmtree(item)
@@ -19,7 +18,7 @@ def setup_directories(base_path, dir_names):
 
 
 def get_unique_path(destination):
-    """Increments filename if a collision exists (e.g., image.fits -> image_1.fits)."""
+    """Increments filename if a collision exists."""
     if not destination.exists():
         return destination
 
@@ -38,19 +37,15 @@ def reorganize_fits():
     target_dirs = ["lights", "darks", "flats", "bias"]
     cali_subdirs = ["darks", "flats", "bias"]
 
-    # 1. Initialize top-level directories
-    print("Initializing directories...")
     setup_directories(cwd, target_dirs)
 
     cali_frame_root = cwd / "CALI_FRAME"
     if not cali_frame_root.exists():
-        print(f"Error: {cali_frame_root} not found.")
+        print(f"Aborting: Source directory '{cali_frame_root}' not found.")
         return
 
-    # Regex for subdirectories starting with cam_0
     cam_regex = re.compile(r"^cam_0.*$")
 
-    # 2. Process CALI_FRAME subdirectories
     for sub in cali_subdirs:
         source_category_path = cali_frame_root / sub
         dest_category_path = cwd / sub
@@ -58,21 +53,24 @@ def reorganize_fits():
         if not source_category_path.exists():
             continue
 
-        print(f"Processing category: {sub}...")
-
-        # Find subdirectories matching the regex
+        # Iterate through subdirectories matching 'cam_0*'
         for folder in source_category_path.iterdir():
             if folder.is_dir() and cam_regex.match(folder.name):
-                # Find all .fits files (recursively or just direct children)
                 for fits_file in folder.rglob("*.fits"):
                     dest_file_path = dest_category_path / fits_file.name
-
-                    # Handle duplicate names
                     final_destination = get_unique_path(dest_file_path)
 
-                    shutil.copy2(fits_file, final_destination)
+                    # Informational print before copy
+                    print(
+                        f"Copying: {fits_file.relative_to(cwd)} -> {final_destination.relative_to(cwd)}"
+                    )
 
-    print("Reorganization complete.")
+                    try:
+                        shutil.copy2(fits_file, final_destination)
+                    except Exception as e:
+                        print(f"Failed to copy {fits_file.name}: {e}")
+
+    print("\nReorganization complete.")
 
 
 if __name__ == "__main__":
