@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def setup_directories(base_path: Path, dir_names: list[str]):
-    """Creates or clears target directories. Robust to existing non-empty dirs."""
+    """Idempotent setup: creates dirs or wipes contents if they exist."""
     for name in dir_names:
         target_dir = base_path / name
         if target_dir.exists():
@@ -19,7 +19,7 @@ def setup_directories(base_path: Path, dir_names: list[str]):
 
 
 def get_unique_path(destination: Path) -> Path:
-    """Standard collision handling: stem_n.suffix."""
+    """Handles collisions by appending an incrementing counter."""
     if not destination.exists():
         return destination
 
@@ -36,13 +36,13 @@ def reorganize_fits(root_path: Path, lights_src_name: str, use_move: bool):
     target_dirs = ["lights", "darks", "flats", "bias"]
     cali_subdirs = ["darks", "flats", "bias"]
 
+    # 1. Initialize target directories
     setup_directories(root_path, target_dirs)
 
-    # Define the transfer operation
-    op_name = "Moving" if use_move else "Copying"
     transfer_func = shutil.move if use_move else shutil.copy2
+    op_label = "Moving" if use_move else "Copying"
 
-    # 1. Process Lights
+    # 2. Process Lights
     lights_src_path = root_path / lights_src_name
     if lights_src_path.is_dir():
         for fits_file in lights_src_path.rglob("*.fits"):
@@ -51,11 +51,13 @@ def reorganize_fits(root_path: Path, lights_src_name: str, use_move: bool):
 
             dest = get_unique_path(root_path / "lights" / fits_file.name)
             print(
-                f"{op_name} Light: {fits_file.relative_to(root_path)} -> {dest.relative_to(root_path)}"
+                f"{op_label} Light: {fits_file.relative_to(root_path)} -> {dest.relative_to(root_path)}"
             )
             transfer_func(fits_file, dest)
+    else:
+        print(f"Warning: Lights source '{lights_src_path}' not found.")
 
-    # 2. Process Calibration Frames
+    # 3. Process Calibration Frames
     cali_root = root_path / "CALI_FRAME"
     cam_regex = re.compile(r"^cam_0.*$")
 
@@ -70,28 +72,33 @@ def reorganize_fits(root_path: Path, lights_src_name: str, use_move: bool):
                     for fits_file in folder.rglob("*.fits"):
                         dest = get_unique_path(root_path / sub / fits_file.name)
                         print(
-                            f"{op_name} Cali:  {fits_file.relative_to(root_path)} -> {dest.relative_to(root_path)}"
+                            f"{op_label} Cali:  {fits_file.relative_to(root_path)} -> {dest.relative_to(root_path)}"
                         )
                         transfer_func(fits_file, dest)
+    else:
+        print(f"Warning: 'CALI_FRAME' not found in {root_path}")
+
+    print("\nReorganization complete. Ready for Siril processing.")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Reorganize FITS files with optional move support."
+        description="Reorganize FITS files for Siril processing."
     )
-    parser.add_argument("directory", help="The starting root directory.")
+    parser.add_argument("directory", help="The root/starting directory.")
     parser.add_argument(
-        "lights_dir", help="Subdirectory name under 'directory' containing lights."
+        "lights_dir",
+        help="Subdirectory name under 'directory' containing the session lights.",
     )
     parser.add_argument(
-        "--move", action="store_true", help="Move files instead of copying them."
+        "--move", action="store_true", help="Move files instead of copying."
     )
 
     args = parser.parse_args()
     root = Path(args.directory).resolve()
 
     if not root.is_dir():
-        print(f"Error: {root} is not a directory.")
+        print(f"Error: {root} is not a valid directory.")
         return
 
     reorganize_fits(root, args.lights_dir, args.move)
