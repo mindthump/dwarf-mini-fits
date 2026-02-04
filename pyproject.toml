@@ -1,0 +1,8 @@
+[project]
+name = "dwarf-mini-fits"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "astropy>=7.2.0",
+]
