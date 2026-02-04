@@ -5,11 +5,11 @@ from pathlib import Path
 
 
 def setup_directories(base_path: Path, dir_names: list[str]):
-    """Idempotent setup: creates dirs or wipes contents inside the session directory."""
+    """Creates or wipes target directories under the siril-ready path."""
     for name in dir_names:
         target_dir = base_path / name
         if target_dir.exists():
-            print(f"Clearing existing directory: {target_dir.name}")
+            print(f"Clearing: {target_dir}")
             for item in target_dir.iterdir():
                 if item.is_dir():
                     shutil.rmtree(item)
@@ -33,25 +33,21 @@ def get_unique_path(destination: Path) -> Path:
         counter += 1
 
 
-def reorganize_fits(session_path: Path, lights_src_name: str, use_move: bool):
-    # These will now be created inside session_path
+def reorganize_fits(root: Path, lights_src_name: str):
+    # Define the destination root: root / siril-ready / <lights_dir>
+    dest_root = root / "siril-ready" / lights_src_name
+
     target_dirs = ["lights", "darks", "flats", "bias"]
     cali_subdirs = ["darks", "flats", "bias"]
 
-    # 1. Initialize target directories INSIDE the session directory
-    setup_directories(session_path, target_dirs)
+    print(f"Destination initialized at: {dest_root}")
+    setup_directories(dest_root, target_dirs)
 
-    transfer_func = shutil.move if use_move else shutil.copy2
-    op_label = "Moving" if use_move else "Copying"
+    # 1. Process Lights (Source: root / <lights_dir>)
+    lights_src_path = root / lights_src_name
+    lights_dest_path = dest_root / "lights"
 
-    # 2. Process Lights (source is session_path/lights_src_name)
-    lights_src_path = session_path / lights_src_name
-    lights_dest_path = session_path / "lights"
-
-    if (
-        lights_src_path.is_dir()
-        and lights_src_path.resolve() != lights_dest_path.resolve()
-    ):
+    if lights_src_path.is_dir():
         for fits_file in lights_src_path.rglob("*.fits"):
             filename_lower = fits_file.name.lower()
             if filename_lower.startswith("failed") or filename_lower.startswith(
@@ -60,20 +56,19 @@ def reorganize_fits(session_path: Path, lights_src_name: str, use_move: bool):
                 continue
 
             dest = get_unique_path(lights_dest_path / fits_file.name)
-            print(f"{op_label} Light: {fits_file.name} -> lights/{dest.name}")
-            transfer_func(fits_file, dest)
+            print(f"Copying Light: {fits_file.name} -> {dest.relative_to(dest_root)}")
+            shutil.copy2(fits_file, dest)
     else:
-        if not lights_src_path.is_dir():
-            print(f"Warning: Lights source '{lights_src_path}' not found.")
+        print(f"Warning: Lights source '{lights_src_path}' not found.")
 
-    # 3. Process Calibration Frames (source is session_path/CALI_FRAME/...)
-    cali_root = session_path / "CALI_FRAME"
+    # 2. Process Calibration Frames (Source: root / CALI_FRAME / ...)
+    cali_root = root / "CALI_FRAME"
     cam_regex = re.compile(r"^cam_0.*$")
 
     if cali_root.is_dir():
         for sub in cali_subdirs:
             source_cat = cali_root / sub
-            dest_cat = session_path / sub
+            dest_cat = dest_root / sub
 
             if not source_cat.is_dir():
                 continue
@@ -83,37 +78,33 @@ def reorganize_fits(session_path: Path, lights_src_name: str, use_move: bool):
                     for fits_file in folder.rglob("*.fits"):
                         dest = get_unique_path(dest_cat / fits_file.name)
                         print(
-                            f"{op_label} Cali:  {fits_file.name} -> {sub}/{dest.name}"
+                            f"Copying Cali:  {fits_file.name} -> {dest.relative_to(dest_root)}"
                         )
-                        transfer_func(fits_file, dest)
+                        shutil.copy2(fits_file, dest)
     else:
-        print(f"Warning: 'CALI_FRAME' not found in {session_path}")
+        print(f"Warning: 'CALI_FRAME' not found in {root}")
 
-    print(f"\nReorganization of {session_path.name} complete.")
+    print(f"\nReorganization complete. Results in: {dest_root}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Reorganize FITS files within a specific session directory."
+        description="Reorganize FITS files into a siril-ready directory structure."
     )
+    parser.add_argument("directory", help="The root/starting directory.")
     parser.add_argument(
-        "directory", help="The session-specific directory (e.g., /data/2024-02-03)."
-    )
-    parser.add_argument(
-        "lights_dir", help="Subdirectory name inside 'directory' containing raw lights."
-    )
-    parser.add_argument(
-        "--move", action="store_true", help="Move files instead of copying."
+        "lights_dir",
+        help="Subdirectory name under 'directory' containing the session lights.",
     )
 
     args = parser.parse_args()
-    session_path = Path(args.directory).resolve()
+    root = Path(args.directory).resolve()
 
-    if not session_path.is_dir():
-        print(f"Error: {session_path} is not a valid directory.")
+    if not root.is_dir():
+        print(f"Error: {root} is not a valid directory.")
         return
 
-    reorganize_fits(session_path, args.lights_dir, args.move)
+    reorganize_fits(root, args.lights_dir)
 
 
 if __name__ == "__main__":
