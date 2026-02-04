@@ -5,11 +5,11 @@ from pathlib import Path
 
 
 def setup_directories(base_path: Path, dir_names: list[str]):
-    """Creates or wipes target directories under the siril-ready path."""
+    """Creates or wipes target directories under the destination path."""
     for name in dir_names:
         target_dir = base_path / name
         if target_dir.exists():
-            print(f"Clearing: {target_dir}")
+            print(f"Cleaning existing target: {target_dir.name}")
             for item in target_dir.iterdir():
                 if item.is_dir():
                     shutil.rmtree(item)
@@ -20,7 +20,7 @@ def setup_directories(base_path: Path, dir_names: list[str]):
 
 
 def get_unique_path(destination: Path) -> Path:
-    """Handles collisions by appending an incrementing counter."""
+    """Appends _n to filename if a collision occurs."""
     if not destination.exists():
         return destination
 
@@ -34,13 +34,13 @@ def get_unique_path(destination: Path) -> Path:
 
 
 def reorganize_fits(root: Path, lights_src_name: str):
-    # Define the destination root: root / siril-ready / <lights_dir>
+    # Destination: root / siril-ready / <lights_dir>
     dest_root = root / "siril-ready" / lights_src_name
 
     target_dirs = ["lights", "darks", "flats", "bias"]
     cali_subdirs = ["darks", "flats", "bias"]
 
-    print(f"Destination initialized at: {dest_root}")
+    print(f"Organizing session into: {dest_root}")
     setup_directories(dest_root, target_dirs)
 
     # 1. Process Lights (Source: root / <lights_dir>)
@@ -56,7 +56,7 @@ def reorganize_fits(root: Path, lights_src_name: str):
                 continue
 
             dest = get_unique_path(lights_dest_path / fits_file.name)
-            print(f"Copying Light: {fits_file.name} -> {dest.relative_to(dest_root)}")
+            print(f"Copying Light: {fits_file.name} -> lights/{dest.name}")
             shutil.copy2(fits_file, dest)
     else:
         print(f"Warning: Lights source '{lights_src_path}' not found.")
@@ -77,31 +77,38 @@ def reorganize_fits(root: Path, lights_src_name: str):
                 if folder.is_dir() and cam_regex.match(folder.name):
                     for fits_file in folder.rglob("*.fits"):
                         dest = get_unique_path(dest_cat / fits_file.name)
-                        print(
-                            f"Copying Cali:  {fits_file.name} -> {dest.relative_to(dest_root)}"
-                        )
+                        print(f"Copying Cali:  {fits_file.name} -> {sub}/{dest.name}")
                         shutil.copy2(fits_file, dest)
     else:
         print(f"Warning: 'CALI_FRAME' not found in {root}")
 
-    print(f"\nReorganization complete. Results in: {dest_root}")
+    print(f"\nSuccess! Files staged for Siril in: {dest_root}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Reorganize FITS files into a siril-ready directory structure."
+        description="Stage dwarf telescope FITS files for Siril."
     )
-    parser.add_argument("directory", help="The root/starting directory.")
+    parser.add_argument("directory", help="The root session directory.")
     parser.add_argument(
         "lights_dir",
-        help="Subdirectory name under 'directory' containing the session lights.",
+        help="Subdirectory name (under directory) containing the raw lights.",
     )
 
     args = parser.parse_args()
+
+    # We resolve the root to make it absolute
     root = Path(args.directory).resolve()
 
     if not root.is_dir():
         print(f"Error: {root} is not a valid directory.")
+        return
+
+    # Check if lights_dir exists before we start creating output folders
+    if not (root / args.lights_dir).is_dir():
+        print(
+            f"Error: Source lights directory '{args.lights_dir}' not found under {root}."
+        )
         return
 
     reorganize_fits(root, args.lights_dir)
