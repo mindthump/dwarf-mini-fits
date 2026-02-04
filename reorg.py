@@ -34,16 +34,22 @@ def get_unique_path(destination: Path) -> Path:
 
 
 def reorganize_fits(root: Path, lights_src_name: str):
-    # Destination: root / siril-ready / <lights_dir>
-    dest_root = root / "siril-ready" / lights_src_name
+    # FIX: Use .name to ensure we get a relative string for the folder
+    # even if the user provides an absolute path as an argument.
+    session_subdir = Path(lights_src_name).name
+    dest_root = root / "siril-ready" / session_subdir
 
+    # Target plural names for Siril
     target_dirs = ["lights", "darks", "flats", "bias"]
-    cali_subdirs = ["darks", "flats", "bias"]
+
+    # Mapping: Source Folder Name -> Destination Folder Name
+    cali_map = {"dark": "darks", "flat": "flats", "bias": "bias"}
 
     print(f"Organizing session into: {dest_root}")
     setup_directories(dest_root, target_dirs)
 
     # 1. Process Lights (Source: root / <lights_dir>)
+    # We use the original lights_src_name here to find the source
     lights_src_path = root / lights_src_name
     lights_dest_path = dest_root / "lights"
 
@@ -61,14 +67,14 @@ def reorganize_fits(root: Path, lights_src_name: str):
     else:
         print(f"Warning: Lights source '{lights_src_path}' not found.")
 
-    # 2. Process Calibration Frames (Source: root / CALI_FRAME / ...)
+    # 2. Process Calibration Frames
     cali_root = root / "CALI_FRAME"
     cam_regex = re.compile(r"^cam_0.*$")
 
     if cali_root.is_dir():
-        for sub in cali_subdirs:
-            source_cat = cali_root / sub
-            dest_cat = dest_root / sub
+        for src_sub, dest_sub in cali_map.items():
+            source_cat = cali_root / src_sub
+            dest_cat = dest_root / dest_sub
 
             if not source_cat.is_dir():
                 continue
@@ -77,7 +83,9 @@ def reorganize_fits(root: Path, lights_src_name: str):
                 if folder.is_dir() and cam_regex.match(folder.name):
                     for fits_file in folder.rglob("*.fits"):
                         dest = get_unique_path(dest_cat / fits_file.name)
-                        print(f"Copying Cali:  {fits_file.name} -> {sub}/{dest.name}")
+                        print(
+                            f"Copying Cali:  {fits_file.name} -> {dest_sub}/{dest.name}"
+                        )
                         shutil.copy2(fits_file, dest)
     else:
         print(f"Warning: 'CALI_FRAME' not found in {root}")
@@ -87,7 +95,7 @@ def reorganize_fits(root: Path, lights_src_name: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Stage dwarf telescope FITS files for Siril."
+        description="Stage Dwarf telescope FITS files for Siril."
     )
     parser.add_argument("directory", help="The root session directory.")
     parser.add_argument(
@@ -96,15 +104,13 @@ def main():
     )
 
     args = parser.parse_args()
-
-    # We resolve the root to make it absolute
     root = Path(args.directory).resolve()
 
     if not root.is_dir():
         print(f"Error: {root} is not a valid directory.")
         return
 
-    # Check if lights_dir exists before we start creating output folders
+    # Check if lights_dir exists before we start
     if not (root / args.lights_dir).is_dir():
         print(
             f"Error: Source lights directory '{args.lights_dir}' not found under {root}."
