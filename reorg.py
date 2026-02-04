@@ -34,22 +34,20 @@ def get_unique_path(destination: Path) -> Path:
 
 
 def reorganize_fits(root: Path, lights_src_name: str):
-    # FIX: Use .name to ensure we get a relative string for the folder
-    # even if the user provides an absolute path as an argument.
+    # Use .name to ensure a relative string for the output folder
     session_subdir = Path(lights_src_name).name
     dest_root = root / "siril-ready" / session_subdir
 
-    # Target plural names for Siril
-    target_dirs = ["lights", "darks", "flats", "bias"]
+    # Target plural names for Siril (updated bias -> biases)
+    target_dirs = ["lights", "darks", "flats", "biases"]
 
     # Mapping: Source Folder Name -> Destination Folder Name
-    cali_map = {"dark": "darks", "flat": "flats", "bias": "bias"}
+    cali_map = {"dark": "darks", "flat": "flats", "bias": "biases"}
 
     print(f"Organizing session into: {dest_root}")
     setup_directories(dest_root, target_dirs)
 
     # 1. Process Lights (Source: root / <lights_dir>)
-    # We use the original lights_src_name here to find the source
     lights_src_path = root / lights_src_name
     lights_dest_path = dest_root / "lights"
 
@@ -110,7 +108,6 @@ def main():
         print(f"Error: {root} is not a valid directory.")
         return
 
-    # Check if lights_dir exists before we start
     if not (root / args.lights_dir).is_dir():
         print(
             f"Error: Source lights directory '{args.lights_dir}' not found under {root}."
