@@ -2,14 +2,31 @@ import shutil
 import re
 import argparse
 from pathlib import Path
+from astropy.io import fits
+
+
+def get_fits_metadata(file_path: Path):
+    """Extracts essential metadata for validation."""
+    try:
+        with fits.open(file_path) as hdul:
+            header = hdul[0].header
+            return {
+                "exposure": header.get("EXPOSURE") or header.get("EXPTIME"),
+                "gain": header.get("GAIN") or header.get("ISO"),
+                "x": header.get("NAXIS1"),
+                "y": header.get("NAXIS2"),
+            }
+    except Exception as e:
+        print(f"Error reading {file_path.name}: {e}")
+        return None
 
 
 def setup_directories(base_path: Path, dir_names: list[str]):
-    """Creates or wipes target directories under the destination path."""
+    """Creates or wipes target directories."""
     for name in dir_names:
         target_dir = base_path / name
         if target_dir.exists():
-            print(f"Cleaning existing target: {target_dir.name}")
+            print(f"Cleaning: {target_dir.name}")
             for item in target_dir.iterdir():
                 if item.is_dir():
                     shutil.rmtree(item)
@@ -20,10 +37,9 @@ def setup_directories(base_path: Path, dir_names: list[str]):
 
 
 def get_unique_path(destination: Path) -> Path:
-    """Appends _n to filename if a collision occurs."""
+    """Standard stem_n.suffix collision handling."""
     if not destination.exists():
         return destination
-
     stem, suffix = destination.stem, destination.suffix
     counter = 1
     while True:
@@ -34,38 +50,38 @@ def get_unique_path(destination: Path) -> Path:
 
 
 def reorganize_fits(root: Path, lights_src_name: str):
-    # Use .name to ensure a relative string for the output folder
     session_subdir = Path(lights_src_name).name
     dest_root = root / "siril-ready" / session_subdir
-
-    # Target plural names for Siril (updated bias -> biases)
     target_dirs = ["lights", "darks", "flats", "biases"]
-
-    # Mapping: Source Folder Name -> Destination Folder Name
     cali_map = {"dark": "darks", "flat": "flats", "bias": "biases"}
 
-    print(f"Organizing session into: {dest_root}")
     setup_directories(dest_root, target_dirs)
 
-    # 1. Process Lights (Source: root / <lights_dir>)
+    # 1. Process Lights & Establish Baseline Metadata
     lights_src_path = root / lights_src_name
     lights_dest_path = dest_root / "lights"
+    baseline = None
 
     if lights_src_path.is_dir():
         for fits_file in lights_src_path.rglob("*.fits"):
-            filename_lower = fits_file.name.lower()
-            if filename_lower.startswith("failed") or filename_lower.startswith(
-                "stacked"
-            ):
+            if any(fits_file.name.lower().startswith(s) for s in ["failed", "stacked"]):
                 continue
 
-            dest = get_unique_path(lights_dest_path / fits_file.name)
-            print(f"Copying Light: {fits_file.name} -> lights/{dest.name}")
-            shutil.copy2(fits_file, dest)
-    else:
-        print(f"Warning: Lights source '{lights_src_path}' not found.")
+            if baseline is None:
+                baseline = get_fits_metadata(fits_file)
 
-    # 2. Process Calibration Frames
+            dest = get_unique_path(lights_dest_path / fits_file.name)
+            shutil.copy2(fits_file, dest)
+
+    if not baseline:
+        print("Error: No valid light frames found to establish baseline.")
+        return
+
+    print(
+        f"Baseline (Lights): {baseline['x']}x{baseline['y']}, Gain: {baseline['gain']}"
+    )
+
+    # 2. Process Calibration Frames with Verification
     cali_root = root / "CALI_FRAME"
     cam_regex = re.compile(r"^cam_0.*$")
 
@@ -73,48 +89,47 @@ def reorganize_fits(root: Path, lights_src_name: str):
         for src_sub, dest_sub in cali_map.items():
             source_cat = cali_root / src_sub
             dest_cat = dest_root / dest_sub
-
             if not source_cat.is_dir():
                 continue
 
             for folder in source_cat.iterdir():
                 if folder.is_dir() and cam_regex.match(folder.name):
                     for fits_file in folder.rglob("*.fits"):
-                        dest = get_unique_path(dest_cat / fits_file.name)
-                        print(
-                            f"Copying Cali:  {fits_file.name} -> {dest_sub}/{dest.name}"
-                        )
-                        shutil.copy2(fits_file, dest)
-    else:
-        print(f"Warning: 'CALI_FRAME' not found in {root}")
+                        meta = get_fits_metadata(fits_file)
+                        if not meta:
+                            continue
 
-    print(f"\nSuccess! Files staged for Siril in: {dest_root}")
+                        # Validation Logic
+                        # Flats and Darks should match dimensions; Darks usually match exposure
+                        if meta["x"] != baseline["x"] or meta["y"] != baseline["y"]:
+                            continue
+
+                        if (
+                            dest_sub == "darks"
+                            and meta["exposure"] != baseline["exposure"]
+                        ):
+                            # Optional: Dwarf darks often match exposure exactly
+                            continue
+
+                        dest = get_unique_path(dest_cat / fits_file.name)
+                        shutil.copy2(fits_file, dest)
+
+    print(f"\nSuccess! Verified files staged in: {dest_root}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Stage Dwarf telescope FITS files for Siril."
+        description="Stage verified Dwarf FITS files for Siril."
     )
     parser.add_argument("directory", help="The root session directory.")
-    parser.add_argument(
-        "lights_dir",
-        help="Subdirectory name (under directory) containing the raw lights.",
-    )
-
+    parser.add_argument("lights_dir", help="Subdirectory name containing raw lights.")
     args = parser.parse_args()
     root = Path(args.directory).resolve()
 
-    if not root.is_dir():
-        print(f"Error: {root} is not a valid directory.")
-        return
-
-    if not (root / args.lights_dir).is_dir():
-        print(
-            f"Error: Source lights directory '{args.lights_dir}' not found under {root}."
-        )
-        return
-
-    reorganize_fits(root, args.lights_dir)
+    if root.is_dir() and (root / args.lights_dir).is_dir():
+        reorganize_fits(root, args.lights_dir)
+    else:
+        print("Invalid directory paths provided.")
 
 
 if __name__ == "__main__":
